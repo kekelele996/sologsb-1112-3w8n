@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { computed, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
+import { Refresh, Search } from '@element-plus/icons-vue';
 import FilterBar from '../components/common/FilterBar.vue';
 import EmptyPanel from '../components/common/EmptyPanel.vue';
 import RingCodeInput from '../components/common/RingCodeInput.vue';
@@ -9,11 +10,21 @@ import SpeciesPicker from '../components/common/SpeciesPicker.vue';
 import { useRingStore } from '../stores/ringStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useSessionStore } from '../stores/sessionStore';
-import { BIRD_AGES, RING_STATUSES, STATUS_COLOR, type BirdAge, type RingRecord, type RingStatus } from '../types/ring-record';
+import {
+  BIRD_AGES,
+  RECONCILE_STATUSES,
+  RING_STATUSES,
+  STATUS_COLOR,
+  type BirdAge,
+  type RingRecord,
+  type RingStatus,
+} from '../types/ring-record';
 import { formatDate } from '../utils/format';
 import { speciesCount } from '../utils/stats';
+import { findSiteByNo, ringSiteLabel } from '../utils/ledger';
 
 const route = useRoute();
+const router = useRouter();
 const ringStore = useRingStore();
 const siteStore = useSiteStore();
 const sessionStore = useSessionStore();
@@ -40,42 +51,56 @@ interface RingForm {
   remark: string;
 }
 
-const form = ref<RingForm>({
-  ringNo: 'A-',
-  colorRing: '无',
-  speciesCn: '',
-  speciesSci: '',
-  age: '成',
-  ringDate: new Date().toISOString().slice(0, 10),
-  netNo: '1 号网',
-  netRound: 1,
-  status: '初捕',
-  ringer: '',
-  siteId: '',
-  sessionId: '',
-  remark: '',
-});
+function defaultForm(): RingForm {
+  const firstSite = siteStore.activeSites[0];
+  const firstSession = firstSite ? sessionStore.openSessionsForSite(firstSite.id)[0] : undefined;
+  return {
+    ringNo: 'A-',
+    colorRing: '无',
+    speciesCn: '红喉歌鸲',
+    speciesSci: 'Calliope calliope',
+    age: '成',
+    ringDate: new Date().toISOString().slice(0, 10),
+    netNo: '1 号网',
+    netRound: 1,
+    status: '初捕',
+    ringer: '韩雪',
+    siteId: firstSite?.id ?? '',
+    sessionId: firstSession?.id ?? '',
+    remark: '',
+  };
+}
+
+const form = ref<RingForm>(defaultForm());
 
 const rules: FormRules = {
   ringNo: [{ required: true, message: '请输入金属环号', trigger: 'blur' }],
   speciesCn: [{ required: true, message: '请选择或输入鸟种中文名', trigger: 'change' }],
   ringer: [{ required: true, message: '请输入环志人', trigger: 'blur' }],
+  siteId: [{ required: true, message: '请选择监测组当下有效的鸟点', trigger: 'change' }],
+  sessionId: [{ required: true, message: '请选择进行中的调查批次', trigger: 'change' }],
 };
 
 const kwParam = computed(() => (typeof route.query.kw === 'string' ? route.query.kw : ''));
 const speciesParam = computed(() => (typeof route.query.species === 'string' ? route.query.species : ''));
 const statusParam = computed(() => (typeof route.query.status === 'string' ? route.query.status : ''));
-const sessionParam = computed(() => (typeof route.query.session === 'string' ? route.query.session : ''));
-const sessionSelectParam = computed(() => (typeof route.query.sessionSelect === 'string' ? route.query.sessionSelect : ''));
+const reconcileParam = computed(() => (typeof route.query.reconcile === 'string' ? route.query.reconcile : ''));
+const sessionParam = computed(() => (typeof route.query.sessionSelect === 'string' ? route.query.sessionSelect : ''));
+/** 按登记当时点位编号精确查（监测组改号后，用旧编号也能把历史记录查回来） */
+const siteNoParam = computed(() => (typeof route.query.siteNo === 'string' ? route.query.siteNo : ''));
 
 const visible = computed(() => {
   const kw = kwParam.value.trim().toLowerCase();
+  const siteNo = siteNoParam.value.trim().toLowerCase();
   return ringStore.rings.filter((record) => {
     if (speciesParam.value && record.speciesCn !== speciesParam.value) return false;
     if (statusParam.value && record.status !== statusParam.value) return false;
-    if (sessionSelectParam.value && record.sessionId !== sessionSelectParam.value) return false;
+    if (reconcileParam.value && record.reconcile !== reconcileParam.value) return false;
+    if (sessionParam.value && record.sessionId !== sessionParam.value) return false;
+    if (siteNo && record.siteNoSnapshot.trim().toLowerCase() !== siteNo) return false;
     if (kw) {
-      const haystack = `${record.ringNo} ${record.colorRing} ${record.speciesCn} ${record.speciesSci} ${record.ringer} ${record.netNo}`.toLowerCase();
+      const haystack =
+        `${record.ringNo} ${record.colorRing} ${record.speciesCn} ${record.speciesSci} ${record.ringer} ${record.netNo} ${record.siteNoSnapshot} ${record.sessionNoSnapshot}`.toLowerCase();
       if (!haystack.includes(kw)) return false;
     }
     return true;
@@ -91,29 +116,28 @@ const existedHistory = computed(() => (existedRecord.value ? ringStore.historyOf
 
 const entityOptions = computed(() => speciesCount(ringStore.rings).map((item) => item.speciesCn));
 
+/** 新登记只选有效点位；切换点位时批次重置为该点位下进行中的批次 */
+const formSessions = computed(() => sessionStore.openSessionsForSite(form.value.siteId));
+
+watch(
+  () => form.value.siteId,
+  (siteId, oldSiteId) => {
+    if (dialogVisible.value && !editingId.value && siteId !== oldSiteId) {
+      form.value.sessionId = sessionStore.openSessionsForSite(siteId)[0]?.id ?? '';
+    }
+  },
+);
+
 function openCreate() {
   editingId.value = '';
   formRef.value?.clearValidate();
-  form.value = {
-    ringNo: 'A-',
-    colorRing: '无',
-    speciesCn: '红喉歌鸲',
-    speciesSci: 'Calliope calliope',
-    age: '成',
-    ringDate: new Date().toISOString().slice(0, 10),
-    netNo: '1 号网',
-    netRound: 1,
-    status: '初捕',
-    ringer: '韩雪',
-    siteId: siteStore.sites[0]?.id ?? '',
-    sessionId: sessionStore.sessions[0]?.id ?? '',
-    remark: '',
-  };
+  form.value = defaultForm();
   dialogVisible.value = true;
 }
 
 function openEdit(record: RingRecord) {
   editingId.value = record.id;
+  formRef.value?.clearValidate();
   form.value = {
     ringNo: record.ringNo,
     colorRing: record.colorRing,
@@ -157,14 +181,48 @@ async function submit() {
     sessionId: form.value.sessionId,
     remark: form.value.remark,
   };
-  if (editingId.value) {
-    await ringStore.updateRing(editingId.value, payload);
-    ElMessage.success(`已更新环志记录 ${payload.ringNo}`);
-  } else {
-    await ringStore.addRing(payload);
-    ElMessage.success(`已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`);
+  try {
+    if (editingId.value) {
+      await ringStore.updateRing(editingId.value, payload);
+      ElMessage.success(`已更新环志记录 ${payload.ringNo}`);
+    } else {
+      await ringStore.addRing(payload, {
+        activeSites: siteStore.activeSites,
+        openSessions: sessionStore.openSessions,
+      });
+      ElMessage.success(`已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`);
+    }
+    dialogVisible.value = false;
+  } catch (error) {
+    ElMessage.error((error as Error).message);
   }
-  dialogVisible.value = false;
+}
+
+/** 两边按点位编号对账：环志组只判差异，点位要靠监测组补台账 */
+async function reconcile() {
+  const result = await ringStore.reconcileAll(siteStore.sites);
+  if (result.suspended > 0) {
+    ElMessage.warning(`对账完成：共核对 ${result.checked} 条，${result.suspended} 条挂起等监测组补台账，本轮解除挂起 ${result.cleared} 条`);
+  } else {
+    ElMessage.success(`对账完成：共核对 ${result.checked} 条，全部与监测组台账对得上`);
+  }
+}
+
+/** 按登记当时点位编号回查（输入旧编号即可查改号前的历史记录） */
+const siteNoSearch = ref(siteNoParam.value);
+watch(siteNoParam, (value) => (siteNoSearch.value = value));
+const siteNoResolve = computed(() => (siteNoSearch.value.trim() ? findSiteByNo(siteStore.sites, siteNoSearch.value) : undefined));
+
+function applySiteNoSearch() {
+  const value = siteNoSearch.value.trim();
+  const query = { ...route.query };
+  if (value) query.siteNo = value;
+  else delete query.siteNo;
+  void router.replace({ query });
+}
+
+function siteLabel(record: RingRecord): string {
+  return ringSiteLabel(record, siteStore.sites);
 }
 
 function showHistory(ringNo: string) {
@@ -182,15 +240,24 @@ async function remove(record: RingRecord) {
 }
 
 const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
+const suspendedCount = computed(() => ringStore.suspendedRings.length);
+
+function rowClassName(scope: { row: RingRecord }): string {
+  return scope.row.reconcile === '挂起' ? 'row-suspended' : '';
+}
 </script>
 
 <template>
   <div>
     <h2 class="page-title">环志记录录入与检索</h2>
-    <p class="page-desc">金属环号 + 彩环组合双段录入，自动查重；环号重复时提示已存在并跳转该环号历史记录。</p>
+    <p class="page-desc">
+      环志组留底：金属环号自动查重；新登记只能落到监测组当下有效的鸟点与进行中的批次，登记当时的点位编号随记录留底，监测组改号后历史仍按旧编号可查。两边按点位编号对账，对不上的挂起等监测组补台账。
+    </p>
 
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">登记环志记录</el-button>
+      <el-button :icon="Refresh" @click="reconcile">按点位编号对账</el-button>
+      <el-tag v-if="suspendedCount > 0" type="warning" effect="dark">挂起 {{ suspendedCount }} 条 · 等监测组补台账</el-tag>
       <el-tag v-if="ringStore.duplicate" type="warning" effect="plain">
         查重命中：{{ ringStore.duplicate.ringNo }}（{{ ringStore.duplicate.speciesCn }}）
       </el-tag>
@@ -200,37 +267,62 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       :fields="[
         { key: 'species', label: '鸟种', options: entityOptions, width: 140 },
         { key: 'status', label: '状态', options: [...RING_STATUSES], width: 110 },
+        { key: 'reconcile', label: '对账', options: [...RECONCILE_STATUSES], width: 100 },
         { key: 'sessionSelect', label: '调查批次', options: sessionStore.sessions.map((s) => s.sessionNo), width: 130 },
       ]"
-      keyword-placeholder="搜索环号 / 鸟种 / 环志人 / 网号"
+      keyword-placeholder="搜索环号 / 鸟种 / 环志人 / 点位编号"
       :result-count="visible.length"
       :total-count="ringStore.rings.length"
     />
 
+    <div class="snapshot-filter">
+      <span class="snapshot-label">按登记当时点位编号查</span>
+      <el-input
+        v-model="siteNoSearch"
+        style="width: 180px"
+        placeholder="如：S-03（支持改号前旧编号）"
+        clearable
+        @keyup.enter="applySiteNoSearch"
+        @clear="applySiteNoSearch"
+      />
+      <el-button :icon="Search" @click="applySiteNoSearch">查历史</el-button>
+      <el-tag v-if="siteNoParam" :type="siteNoResolve ? 'success' : 'warning'" size="small" effect="plain">
+        {{ siteNoResolve ? `编号 ${siteNoParam} 现为 ${siteNoResolve.siteNo} · ${siteNoResolve.name}` : `编号 ${siteNoParam} 台账查无此点` }}
+      </el-tag>
+    </div>
+
     <EmptyPanel v-if="visible.length === 0" description="没有符合条件的环志记录" action-text="登记环志记录" @action="openCreate" />
 
     <el-card v-else shadow="never" class="block">
-      <el-table :data="visible" size="small" border>
+      <el-table :data="visible" size="small" border :row-class-name="rowClassName">
         <el-table-column prop="ringNo" label="金属环号" width="110" />
-        <el-table-column prop="colorRing" label="彩环" width="100" />
-        <el-table-column prop="speciesCn" label="鸟种" width="110" />
-        <el-table-column prop="speciesSci" label="学名" min-width="170" show-overflow-tooltip />
-        <el-table-column prop="age" label="年龄" width="80" />
-        <el-table-column label="环志日期" width="110">
+        <el-table-column prop="colorRing" label="彩环" width="90" />
+        <el-table-column prop="speciesCn" label="鸟种" width="100" />
+        <el-table-column label="环志日期" width="100">
           <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
         </el-table-column>
-        <el-table-column prop="netNo" label="网号" width="90" />
-        <el-table-column prop="netRound" label="网次" width="70" align="right" />
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="80">
           <template #default="scope">
             <el-tag :type="STATUS_COLOR[scope.row.status as RingStatus]" size="small">{{ scope.row.status }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="ringer" label="环志人" width="90" />
-        <el-table-column label="鸟点" width="140">
-          <template #default="scope">{{ siteStore.siteName(scope.row.siteId) }}</template>
+        <el-table-column prop="ringer" label="环志人" width="80" />
+        <el-table-column label="登记点位编号" width="150">
+          <template #default="scope">
+            <span :class="{ 'snapshot-missing': scope.row.reconcile === '挂起' }">{{ scope.row.siteNoSnapshot || '—' }}</span>
+            <el-tag v-if="scope.row.legacyBackfilled" type="info" size="small" effect="plain" class="backfill-tag">回填</el-tag>
+          </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="鸟点" min-width="130" show-overflow-tooltip>
+          <template #default="scope">{{ siteLabel(scope.row) }}</template>
+        </el-table-column>
+        <el-table-column label="对账" width="80">
+          <template #default="scope">
+            <el-tag :type="scope.row.reconcile === '正常' ? 'success' : 'warning'" size="small">{{ scope.row.reconcile }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="reconcileNote" label="挂起原因" min-width="160" show-overflow-tooltip />
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="scope">
             <el-button link type="primary" @click="showHistory(scope.row.ringNo)">历史</el-button>
             <el-button link type="primary" @click="openEdit(scope.row)">编辑</el-button>
@@ -285,15 +377,35 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
         <el-form-item label="环志人" prop="ringer">
           <el-input v-model="form.ringer" style="width: 160px" maxlength="16" placeholder="如：韩雪" />
         </el-form-item>
-        <el-form-item label="鸟点">
-          <el-select v-model="form.siteId" style="width: 240px" :options="[]">
-            <el-option v-for="site in siteStore.sites" :key="site.id" :label="`${site.siteNo} · ${site.name}`" :value="site.id" />
+        <el-form-item v-if="!editingId" label="鸟点" prop="siteId">
+          <el-select v-model="form.siteId" style="width: 320px" placeholder="仅监测组当下有效的鸟点">
+            <el-option
+              v-for="site in siteStore.activeSites"
+              :key="site.id"
+              :label="`${site.siteNo} · ${site.name}（${site.habitat}）`"
+              :value="site.id"
+            />
           </el-select>
+          <div class="field-hint">停用点位不在此列；点位由监测组维护，环志组不能自行登记新点位</div>
         </el-form-item>
-        <el-form-item label="调查批次">
-          <el-select v-model="form.sessionId" style="width: 240px">
-            <el-option v-for="session in sessionStore.sessions" :key="session.id" :label="`${session.sessionNo} · ${session.date}`" :value="session.id" />
+        <el-form-item v-else label="鸟点">
+          <el-input :model-value="siteLabel(ringStore.rings.find((r) => r.id === editingId)!)" disabled style="width: 320px" />
+          <div class="field-hint">点位归属是登记当时的历史事实，不再改动；如需按编号核对请看「登记点位编号」列</div>
+        </el-form-item>
+        <el-form-item v-if="!editingId" label="调查批次" prop="sessionId">
+          <el-select v-model="form.sessionId" style="width: 320" :placeholder="formSessions.length ? '选择进行中的批次' : '该点位暂无进行中批次'">
+            <el-option
+              v-for="session in formSessions"
+              :key="session.id"
+              :label="`${session.sessionNo} · ${session.date} · 进行中`"
+              :value="session.id"
+            />
           </el-select>
+          <div class="field-hint">已关闭批次不再接受新登记；批次随鸟点联动</div>
+        </el-form-item>
+        <el-form-item v-else label="调查批次">
+          <el-input :model-value="ringStore.rings.find((r) => r.id === editingId)?.sessionNoSnapshot ?? '—'" disabled style="width: 320px" />
+          <div class="field-hint">批次归属为登记当时的留底，历史记录不随批次关闭而变化</div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" maxlength="80" placeholder="重捕位移、体况等" />
@@ -306,16 +418,22 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       </template>
     </el-dialog>
 
-    <el-dialog v-model="historyVisible" :title="`环号历史记录 · ${historyRingNo}`" width="720px">
+    <el-dialog v-model="historyVisible" :title="`环号历史记录 · ${historyRingNo}`" width="760px">
       <el-table :data="historyRows" size="small" border>
         <el-table-column prop="ringNo" label="环号" width="110" />
-        <el-table-column prop="speciesCn" label="鸟种" width="110" />
-        <el-table-column label="环志日期" width="120">
+        <el-table-column prop="speciesCn" label="鸟种" width="100" />
+        <el-table-column label="环志日期" width="110">
           <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90" />
-        <el-table-column prop="netNo" label="网号" width="100" />
-        <el-table-column prop="ringer" label="环志人" width="90" />
+        <el-table-column prop="status" label="状态" width="80" />
+        <el-table-column prop="netNo" label="网号" width="90" />
+        <el-table-column prop="ringer" label="环志人" width="80" />
+        <el-table-column prop="siteNoSnapshot" label="登记点位编号" width="110" />
+        <el-table-column label="对账" width="80">
+          <template #default="scope">
+            <el-tag :type="scope.row.reconcile === '正常' ? 'success' : 'warning'" size="small">{{ scope.row.reconcile }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
       </el-table>
       <template #footer>
@@ -343,10 +461,36 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
+.snapshot-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 12px;
+  flex-wrap: wrap;
+}
+.snapshot-label {
+  font-size: 13px;
+  color: #6f5a3e;
+}
 .block {
   border-radius: 8px;
 }
 .ring-form {
   margin-top: 10px;
+}
+.field-hint {
+  font-size: 12px;
+  color: #8a99a5;
+  line-height: 1.5;
+}
+.snapshot-missing {
+  color: #b26a00;
+  font-weight: 600;
+}
+.backfill-tag {
+  margin-left: 4px;
+}
+:deep(.row-suspended) {
+  background-color: #fff7e6;
 }
 </style>

@@ -17,8 +17,10 @@ export interface SurveySession {
   cloudCover: number;
   /** 风力（级） */
   windForce: number;
-  /** 是否已关闭（关闭后出统计） */
+  /** 是否已关闭（关闭后出统计，且不再接受新环志记录） */
   closed: boolean;
+  /** 关闭时间 ISO（仅关闭后有值） */
+  closedAt?: string;
   /** 主调查人 */
   leader: string;
   /** 备注 */

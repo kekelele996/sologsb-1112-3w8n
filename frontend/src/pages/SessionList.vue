@@ -84,7 +84,7 @@ function openCreate() {
   form.value = {
     sessionNo: `2024-${String.fromCharCode(65 + Math.floor(sessionStore.sessions.length / 9))}${String((sessionStore.sessions.length % 9) + 1).padStart(2, '0')}`,
     date: new Date().toISOString().slice(0, 10),
-    siteId: siteStore.sites[0]?.id ?? '',
+    siteId: siteStore.activeSites[0]?.id ?? '',
     startedAt: '05:00',
     endedAt: '11:00',
     netRounds: 6,
@@ -129,11 +129,21 @@ async function submit() {
     remark: form.value.remark,
   };
   if (editingId.value) {
-    await sessionStore.updateSession(editingId.value, payload);
-    ElMessage.success(`已更新批次 ${payload.sessionNo}`);
+    try {
+      await sessionStore.updateSession(editingId.value, payload);
+      ElMessage.success(`已更新批次 ${payload.sessionNo}`);
+    } catch (error) {
+      ElMessage.error(`更新失败：${(error as Error).message}`);
+      return;
+    }
   } else {
-    await sessionStore.addSession(payload);
-    ElMessage.success(`已新建批次 ${payload.sessionNo}`);
+    try {
+      await sessionStore.addSession(payload, siteStore.activeSites.map((site) => site.id));
+      ElMessage.success(`已新建批次 ${payload.sessionNo}`);
+    } catch (error) {
+      ElMessage.error(`新建失败，已回滚批次台账：${(error as Error).message}`);
+      return;
+    }
   }
   dialogVisible.value = false;
 }
@@ -148,8 +158,12 @@ async function close(session: SurveySession) {
     .then(() => true)
     .catch(() => false);
   if (!confirmed) return;
-  await sessionStore.closeSession(session.id);
-  ElMessage.success(`批次 ${session.sessionNo} 已关闭`);
+  try {
+    await sessionStore.closeSession(session.id);
+    ElMessage.success(`批次 ${session.sessionNo} 已关闭（只回滚批次台账，环志组记录不受影响）`);
+  } catch (error) {
+    ElMessage.error(`关闭失败，已回滚：${(error as Error).message}`);
+  }
 }
 
 async function remove(session: SurveySession) {
@@ -157,15 +171,20 @@ async function remove(session: SurveySession) {
     .then(() => true)
     .catch(() => false);
   if (!confirmed) return;
-  await sessionStore.removeSession(session.id);
-  ElMessage.success('已删除');
+  const hasRingRefs = ringStore.rings.some((record) => record.sessionId === session.id);
+  try {
+    await sessionStore.removeSession(session.id, hasRingRefs);
+    ElMessage.success('已删除');
+  } catch (error) {
+    ElMessage.error((error as Error).message);
+  }
 }
 </script>
 
 <template>
   <div>
     <h2 class="page-title">调查批次与观测条件</h2>
-    <p class="page-desc">登记批次号、鸟点、起止时间与云量风力；批次关闭后统计该批鸟种数、初捕数与重捕数。</p>
+    <p class="page-desc">监测组维护：批次只能挂在当下有效的鸟点上；批次关闭后出统计且不再接受新环志登记。关闭失败只回滚批次台账，环志组已登记记录不受影响。</p>
 
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">新建批次</el-button>
@@ -192,7 +211,7 @@ async function remove(session: SurveySession) {
         { key: 'site', label: '鸟点', options: siteStore.sites.map((s) => s.name), width: 150 },
         { key: 'closed', label: '状态', options: ['已关闭', '进行中'], width: 110 },
       ]"
-      keyword-placeholder="搜索批次号 / 主调查人"
+      keyword-placeholder="搜索批次号 / 主调查人 / 点位编号"
       :result-count="statsList.length"
       :total-count="sessionStore.sessions.length"
     />
@@ -241,7 +260,7 @@ async function remove(session: SurveySession) {
           <template #default="scope">
             <el-button link type="primary" @click="detailId = scope.row.session.id">统计</el-button>
             <el-button v-if="!scope.row.session.closed" link type="warning" @click="close(scope.row.session)">关闭批次</el-button>
-            <el-button link type="primary" @click="openEdit(scope.row.session)">编辑</el-button>
+            <el-button v-if="!scope.row.session.closed" link type="primary" @click="openEdit(scope.row.session)">编辑</el-button>
             <el-button link type="danger" @click="remove(scope.row.session)">删除</el-button>
           </template>
         </el-table-column>
@@ -257,9 +276,15 @@ async function remove(session: SurveySession) {
           <el-date-picker v-model="form.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
         </el-form-item>
         <el-form-item label="鸟点">
-          <el-select v-model="form.siteId" style="width: 260px">
-            <el-option v-for="site in siteStore.sites" :key="site.id" :label="`${site.siteNo} · ${site.name}`" :value="site.id" />
+          <el-select v-if="!editingId" v-model="form.siteId" style="width: 260px" placeholder="仅有效鸟点">
+            <el-option
+              v-for="site in siteStore.activeSites"
+              :key="site.id"
+              :label="`${site.siteNo} · ${site.name}`"
+              :value="site.id"
+            />
           </el-select>
+          <el-input v-else :model-value="siteStore.siteName(form.siteId)" disabled style="width: 260px" />
         </el-form-item>
         <el-form-item label="开始 / 结束">
           <el-time-picker v-model="form.startedAt" value-format="HH:mm" placeholder="开始时间" style="width: 130px" />

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useAmap } from '../../hooks/useAmap';
 import { useSiteStore } from '../../stores/siteStore';
 import { buildGridCells, gridToLonLat, habitatColor, lonLatToGrid } from '../../utils/geo';
-import { DEFAULT_BOUNDS, GRID_COLS, GRID_ROWS, HABITATS, type BirdSite } from '../../types/bird-site';
+import { DEFAULT_BOUNDS, GRID_COLS, GRID_ROWS, HABITATS, INACTIVE_COLOR, type BirdSite } from '../../types/bird-site';
 
 const props = withDefaults(
   defineProps<{
@@ -56,11 +56,12 @@ function labelX(col: number): number {
 }
 
 function markerContent(site: BirdSite): string {
-  const color = habitatColor(site.habitat);
+  const color = site.active === false ? INACTIVE_COLOR : habitatColor(site.habitat);
   const selected = props.selectedId === site.id;
+  const label = site.active === false ? `${site.siteNo} ${site.name}（停用）` : `${site.siteNo} ${site.name}`;
   return `<div style="transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;cursor:pointer">
     <div style="width:${selected ? 20 : 14}px;height:${selected ? 20 : 14}px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 0 2px ${selected ? '#c62828' : 'rgba(0,0,0,.18)'}"></div>
-    <div style="margin-top:2px;font-size:11px;color:#33414d;background:rgba(255,255,255,.86);padding:0 3px;border-radius:3px;white-space:nowrap">${site.siteNo} ${site.name}</div>
+    <div style="margin-top:2px;font-size:11px;color:#33414d;background:rgba(255,255,255,.86);padding:0 3px;border-radius:3px;white-space:nowrap">${label}</div>
   </div>`;
 }
 
@@ -136,7 +137,10 @@ watch(effectiveMode, (mode) => {
 });
 
 watch(
-  () => props.sites.map((site) => `${site.id}:${site.lng}:${site.lat}:${site.habitat}`).join('|') + `#${props.selectedId}`,
+  () =>
+    props.sites
+      .map((site) => `${site.id}:${site.lng}:${site.lat}:${site.habitat}:${site.active === false ? 0 : 1}`)
+      .join('|') + `#${props.selectedId}`,
   () => {
     if (effectiveMode.value === 'amap') {
       void renderAmap();
@@ -205,7 +209,7 @@ onBeforeUnmount(() => {
             :cx="(item.cell.col + 0.5) * CELL_W"
             :cy="(item.cell.row + 0.5) * CELL_H"
             :r="selectedId === item.site.id ? 11 : 8"
-            :fill="habitatColor(item.site.habitat)"
+            :fill="item.site.active === false ? INACTIVE_COLOR : habitatColor(item.site.habitat)"
             stroke="#fff"
             stroke-width="2"
           />
@@ -213,10 +217,10 @@ onBeforeUnmount(() => {
             :x="labelX(item.cell.col)"
             :y="(item.cell.row + 0.5) * CELL_H - 14"
             font-size="11"
-            fill="#33414d"
+            :fill="item.site.active === false ? '#8a99a5' : '#33414d'"
             text-anchor="middle"
           >
-            {{ item.site.siteNo }} {{ item.site.name }}
+            {{ item.site.siteNo }} {{ item.site.name }}{{ item.site.active === false ? '（停用）' : '' }}
           </text>
           <text :x="(item.cell.col + 0.5) * CELL_W" :y="(item.cell.row + 0.5) * CELL_H + 4" font-size="10" fill="#fff" text-anchor="middle">
             {{ item.site.netCount }}

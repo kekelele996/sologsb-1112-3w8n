@@ -12,6 +12,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { HABITATS, type BirdSite } from '../types/bird-site';
 import { recaptureRate, speciesCount, statusBreakdown } from '../utils/stats';
 import { sitesByHabitat } from '../utils/geo';
+import { ringSiteLabel } from '../utils/ledger';
 
 const router = useRouter();
 const ringStore = useRingStore();
@@ -25,7 +26,8 @@ const breakdown = computed(() => statusBreakdown(ringStore.rings));
 const speciesList = computed(() => speciesCount(ringStore.rings));
 const habitatStats = computed(() => sitesByHabitat(siteStore.sites));
 const recent = computed(() => ringStore.rings.slice(0, 6));
-const siteNameOf = (siteId: string) => siteStore.siteName(siteId);
+const suspendedCount = computed(() => ringStore.suspendedRings.length);
+const siteNameOf = (record: { siteId: string; siteNoSnapshot?: string }) => ringSiteLabel(record, siteStore.sites);
 
 /** SiteMap 选中点位（emit 回传点位 id）→ 用点位编号过滤鸟点列表与地图 */
 function selectSite(siteId: string) {
@@ -41,6 +43,17 @@ function selectSite(siteId: string) {
       登记环志编号、鸟种与量度，查看鸟点分布（高德地图 JS API，未配置 VITE_AMAP_KEY 时自动退化为本地 SVG 网格视图）。数据保存在浏览器
       IndexedDB（gbbirdring-db）。
     </p>
+
+    <el-alert
+      v-if="suspendedCount > 0"
+      class="suspended-alert"
+      type="warning"
+      show-icon
+      :closable="false"
+      :title="`有 ${suspendedCount} 条环志记录按点位编号与监测组台账对不上，已挂起等监测组补台账`"
+    >
+      <el-button link type="warning" @click="router.push({ path: '/rings', query: { reconcile: '挂起' } })">前往环志记录处理</el-button>
+    </el-alert>
 
     <el-row :gutter="12" class="stat-row">
       <el-col :xs="12" :md="6">
@@ -114,7 +127,8 @@ function selectSite(siteId: string) {
             </el-tag>
             <span class="recent-ring">{{ record.ringNo }}</span>
             <span class="recent-species">{{ record.speciesCn }}</span>
-            <span class="recent-site">{{ siteNameOf(record.siteId) }}</span>
+            <span class="recent-site">{{ siteNameOf(record) }}</span>
+            <el-tag v-if="record.reconcile === '挂起'" type="warning" size="small">挂起</el-tag>
           </div>
         </el-card>
       </el-col>
@@ -132,6 +146,9 @@ function selectSite(siteId: string) {
   margin: 0 0 14px;
   color: #6f8480;
   font-size: 13px;
+}
+.suspended-alert {
+  margin-bottom: 12px;
 }
 .stat-row {
   margin-bottom: 12px;
