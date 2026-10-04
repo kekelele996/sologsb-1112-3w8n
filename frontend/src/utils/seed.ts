@@ -11,12 +11,15 @@ const dateDaysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().
 const sciOf = (cn: string) => SPECIES_CATALOG.find((s) => s.cn === cn)?.sci ?? '';
 
 export const SEED_SITES: BirdSite[] = [
-  { id: 'site-001', siteNo: 'S-01', name: '大汶流芦苇荡', lng: 118.052, lat: 38.921, habitat: '芦苇湿地', netCount: 12, note: '主环志区，网阵沿堤布置' },
-  { id: 'site-002', siteNo: 'S-02', name: '新滩涂面', lng: 118.224, lat: 38.782, habitat: '滩涂', netCount: 8, note: '涉禽停歇地，涨潮时网位需调整' },
-  { id: 'site-003', siteNo: 'S-03', name: '孤岛林场', lng: 118.351, lat: 38.948, habitat: '次生林', netCount: 10, note: '林鸟为主' },
-  { id: 'site-004', siteNo: 'S-04', name: '稻改田片', lng: 117.852, lat: 38.704, habitat: '农田', netCount: 6 },
-  { id: 'site-005', siteNo: 'S-05', name: '湿地公园', lng: 118.118, lat: 39.052, habitat: '城市绿地', netCount: 5, note: '科普环志点' },
-  { id: 'site-006', siteNo: 'S-06', name: '黄河口南岸', lng: 118.602, lat: 38.856, habitat: '芦苇湿地', netCount: 14, note: '巡护兼顾环志' },
+  // 监测组改过号：旧编号 S-11 留在 formerSiteNos，环志组按旧编号登记的历史记录仍对得上
+  { id: 'site-001', siteNo: 'S-01', name: '大汶流芦苇荡', lng: 118.052, lat: 38.921, habitat: '芦苇湿地', netCount: 12, status: '启用', formerSiteNos: ['S-11'], note: '主环志区，网阵沿堤布置' },
+  { id: 'site-002', siteNo: 'S-02', name: '新滩涂面', lng: 118.224, lat: 38.782, habitat: '滩涂', netCount: 8, status: '启用', formerSiteNos: [], note: '涉禽停歇地，涨潮时网位需调整' },
+  { id: 'site-003', siteNo: 'S-03', name: '孤岛林场', lng: 118.351, lat: 38.948, habitat: '次生林', netCount: 10, status: '启用', formerSiteNos: [], note: '林鸟为主' },
+  { id: 'site-004', siteNo: 'S-04', name: '稻改田片', lng: 117.852, lat: 38.704, habitat: '农田', netCount: 6, status: '启用', formerSiteNos: [] },
+  { id: 'site-005', siteNo: 'S-05', name: '湿地公园', lng: 118.118, lat: 39.052, habitat: '城市绿地', netCount: 5, status: '启用', formerSiteNos: [], note: '科普环志点' },
+  { id: 'site-006', siteNo: 'S-06', name: '黄河口南岸', lng: 118.602, lat: 38.856, habitat: '芦苇湿地', netCount: 14, status: '启用', formerSiteNos: [], note: '巡护兼顾环志' },
+  // 监测组按生境调整停用：新登记不能再落此点，历史记录仍保留
+  { id: 'site-007', siteNo: 'S-07', name: '河口瞭望塔旧址', lng: 118.512, lat: 39.108, habitat: '滩涂', netCount: 4, status: '停用', formerSiteNos: [], note: '生境退化为裸滩，本季起停用' },
 ];
 
 export const SEED_SESSIONS: SurveySession[] = [
@@ -24,6 +27,8 @@ export const SEED_SESSIONS: SurveySession[] = [
   { id: 'session-002', sessionNo: '2024-A02', date: dateDaysAgo(14), siteId: 'site-002', startedAt: '05:20', endedAt: '11:30', netRounds: 6, cloudCover: 5, windForce: 3, closed: true, leader: '韩雪' },
   { id: 'session-003', sessionNo: '2024-A03', date: dateDaysAgo(7), siteId: 'site-003', startedAt: '05:10', endedAt: '11:00', netRounds: 6, cloudCover: 1, windForce: 2, closed: true, leader: '郑海' },
   { id: 'session-004', sessionNo: '2024-A04', date: dateDaysAgo(2), siteId: 'site-001', startedAt: '05:30', endedAt: '11:00', netRounds: 6, cloudCover: 8, windForce: 4, closed: false, leader: '郑海', remark: '风力偏大，网次仅完成 4 次' },
+  // 旧批次（已关闭）：台账里没有对应点位编号的历史记录用，演示「挂起等补台账」
+  { id: 'session-005', sessionNo: '2023-C09', date: dateDaysAgo(120), siteId: 'site-004', startedAt: '05:30', endedAt: '10:30', netRounds: 5, cloudCover: 6, windForce: 3, closed: true, leader: '韩雪', remark: '旧台账补录批次' },
 ];
 
 function ring(
@@ -40,7 +45,11 @@ function ring(
   ringer: string,
   days: number,
   remark?: string,
+  /** 登记当时点位编号 / 名称 / 批次号快照；默认按当前关联台账取 */
+  snapshot?: { siteNo: string; siteName: string; sessionNo: string; recon: RingRecord['reconStatus'] },
 ): RingRecord {
+  const site = SEED_SITES.find((item) => item.id === siteId);
+  const session = SEED_SESSIONS.find((item) => item.id === sessionId);
   return {
     id: `ring-${String(index).padStart(3, '0')}`,
     ringNo,
@@ -54,7 +63,11 @@ function ring(
     status,
     ringer,
     siteId,
+    siteNoSnapshot: snapshot?.siteNo ?? site?.siteNo ?? '',
+    siteNameSnapshot: snapshot?.siteName ?? site?.name ?? '',
     sessionId,
+    sessionNoSnapshot: snapshot?.sessionNo ?? session?.sessionNo ?? '',
+    reconStatus: snapshot?.recon ?? '已对账',
     remark,
   };
 }
@@ -78,6 +91,20 @@ export const SEED_RINGS: RingRecord[] = [
   ring(16, 'C-30102', '无', '北红尾鸲', '成', 'session-004', 'site-001', '5 号网', 2, '初捕', '郑海', 2),
   ring(17, 'A-10099', '无', '红喉歌鸲', '成', 'session-004', 'site-001', '3 号网', 3, '回收', '郑海', 2, '回收自外站环志个体'),
   ring(18, 'C-30103', '无', '黄鹡鸰', '幼', 'session-004', 'site-001', '6 号网', 4, '初捕', '韩雪', 2),
+  // 旧记录按历史编号 S-11 登记：监测组改号后旧号留在台账，重新对账仍为已对账
+  ring(19, 'A-09077', '无', '震旦鸦雀', '成', 'session-005', 'site-001', '2 号网', 2, '初捕', '韩雪', 120, '旧台账迁移，登记当时点位编号 S-11', {
+    siteNo: 'S-11',
+    siteName: '大汶流芦苇荡（旧编号）',
+    sessionNo: '2023-C09',
+    recon: '已对账',
+  }),
+  // 旧数据点位归属对不上监测组现台账：挂起，等监测组补点位台账
+  ring(20, 'A-09081', '无', '棕头鸦雀', '亚成', 'session-005', 'site-004', '1 号网', 1, '初捕', '韩雪', 118, '旧台账迁移，点位编号 S-99 在监测组台账中缺失，先挂起', {
+    siteNo: 'S-99',
+    siteName: '旧垦区点（编号待核）',
+    sessionNo: '2023-C09',
+    recon: '挂起',
+  }),
 ];
 
 function morph(

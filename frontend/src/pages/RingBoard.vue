@@ -25,7 +25,10 @@ const breakdown = computed(() => statusBreakdown(ringStore.rings));
 const speciesList = computed(() => speciesCount(ringStore.rings));
 const habitatStats = computed(() => sitesByHabitat(siteStore.sites));
 const recent = computed(() => ringStore.rings.slice(0, 6));
-const siteNameOf = (siteId: string) => siteStore.siteName(siteId);
+/** 历史记录按登记当时的点位编号 / 名称快照显示，点位停用改号不影响回看 */
+const siteNameOf = (record: { siteNoSnapshot?: string; siteNameSnapshot?: string; siteId: string }) =>
+  record.siteNameSnapshot || siteStore.siteName(record.siteId);
+const pendingCount = computed(() => ringStore.pendingRings.length);
 
 /** SiteMap 选中点位（emit 回传点位 id）→ 用点位编号过滤鸟点列表与地图 */
 function selectSite(siteId: string) {
@@ -56,6 +59,15 @@ function selectSite(siteId: string) {
         <StatBadge label="重捕率" :value="recaptureRate(ringStore.rings)" unit="%" status="warning" hint="重捕 / (初捕 + 重捕)" />
       </el-col>
     </el-row>
+
+    <el-alert
+      v-if="pendingCount > 0"
+      class="block"
+      type="error"
+      :closable="false"
+      show-icon
+      :title="`有 ${pendingCount} 条环志记录点位编号对不上监测组台账，已挂起等待补台账（环志组不代建点位）；台账补齐后到「环志记录」页执行按点位编号对账。`"
+    />
 
     <el-row :gutter="16">
       <el-col :xs="24" :lg="16">
@@ -112,9 +124,10 @@ function selectSite(siteId: string) {
             <el-tag size="small" :type="record.status === '初捕' ? 'success' : record.status === '重捕' ? 'warning' : 'danger'" effect="plain">
               {{ record.status }}
             </el-tag>
+            <el-tag v-if="record.reconStatus === '挂起'" size="small" type="danger" effect="plain">挂起</el-tag>
             <span class="recent-ring">{{ record.ringNo }}</span>
             <span class="recent-species">{{ record.speciesCn }}</span>
-            <span class="recent-site">{{ siteNameOf(record.siteId) }}</span>
+            <span class="recent-site">{{ record.siteNoSnapshot }} · {{ siteNameOf(record) }}</span>
           </div>
         </el-card>
       </el-col>

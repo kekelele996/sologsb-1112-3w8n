@@ -1,10 +1,13 @@
 /** 生境类型 */
 export type Habitat = '芦苇湿地' | '滩涂' | '次生林' | '农田' | '城市绿地';
 
-/** 鸟点 */
+/** 点位状态：监测组按生境调整，可停用 / 再启用（停用只拦新登记，不影响历史记录） */
+export type SiteStatus = '启用' | '停用';
+
+/** 鸟点（监测组维护的点位台账） */
 export interface BirdSite {
   id: string;
-  /** 点位编号 */
+  /** 点位编号（当前编号，改号后随之变化） */
   siteNo: string;
   /** 点位名称 */
   name: string;
@@ -16,11 +19,17 @@ export interface BirdSite {
   habitat: Habitat;
   /** 网位数 */
   netCount: number;
+  /** 状态：启用 / 停用（监测组维护） */
+  status: SiteStatus;
+  /** 历史点位编号：改号时旧号追加进此列表，供环志组按登记当时编号对账 */
+  formerSiteNos: string[];
   /** 备注 */
   note?: string;
 }
 
 export const HABITATS: Habitat[] = ['芦苇湿地', '滩涂', '次生林', '农田', '城市绿地'];
+
+export const SITE_STATUSES: SiteStatus[] = ['启用', '停用'];
 
 /** 生境配色（地图标记与 SVG 网格共用） */
 export const HABITAT_COLOR: Record<Habitat, string> = {

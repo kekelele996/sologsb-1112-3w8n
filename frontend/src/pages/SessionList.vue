@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import StatBadge from '../components/common/StatBadge.vue';
 import FilterBar from '../components/common/FilterBar.vue';
 import EmptyPanel from '../components/common/EmptyPanel.vue';
-import { useSessionStore } from '../stores/sessionStore';
+import { useSessionStore, SessionLedgerError } from '../stores/sessionStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useRingStore } from '../stores/ringStore';
 import { cloudText, type SessionStats, type SurveySession } from '../types/session';
@@ -61,7 +61,7 @@ const statsList = computed<SessionStats[]>(() =>
   sessionStore.sessions
     .map((session) => buildSessionStats(session, ringStore.rings, siteStore.siteName(session.siteId)))
     .filter((item) => {
-      if (siteParam.value && siteStore.siteName(item.session.siteId) !== siteParam.value) return false;
+      if (siteParam.value && siteStore.rawSiteName(item.session.siteId) !== siteParam.value) return false;
       if (closedParam.value === '已关闭' && !item.session.closed) return false;
       if (closedParam.value === '进行中' && item.session.closed) return false;
       return true;
@@ -84,7 +84,7 @@ function openCreate() {
   form.value = {
     sessionNo: `2024-${String.fromCharCode(65 + Math.floor(sessionStore.sessions.length / 9))}${String((sessionStore.sessions.length % 9) + 1).padStart(2, '0')}`,
     date: new Date().toISOString().slice(0, 10),
-    siteId: siteStore.sites[0]?.id ?? '',
+    siteId: siteStore.activeSites[0]?.id ?? '',
     startedAt: '05:00',
     endedAt: '11:00',
     netRounds: 6,
@@ -129,10 +129,23 @@ async function submit() {
     remark: form.value.remark,
   };
   if (editingId.value) {
-    await sessionStore.updateSession(editingId.value, payload);
+    try {
+      await sessionStore.updateSession(editingId.value, payload);
+    } catch (error) {
+      ElMessage.error((error as Error).message);
+      return;
+    }
     ElMessage.success(`已更新批次 ${payload.sessionNo}`);
   } else {
-    await sessionStore.addSession(payload);
+    try {
+      await sessionStore.addSession(payload);
+    } catch (error) {
+      if (error instanceof SessionLedgerError) {
+        ElMessage.error(error.message);
+        return;
+      }
+      throw error;
+    }
     ElMessage.success(`已新建批次 ${payload.sessionNo}`);
   }
   dialogVisible.value = false;
@@ -257,8 +270,17 @@ async function remove(session: SurveySession) {
           <el-date-picker v-model="form.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
         </el-form-item>
         <el-form-item label="鸟点">
-          <el-select v-model="form.siteId" style="width: 260px">
-            <el-option v-for="site in siteStore.sites" :key="site.id" :label="`${site.siteNo} · ${site.name}`" :value="site.id" />
+          <el-select v-model="form.siteId" style="width: 260px" placeholder="仅可选启用中的鸟点">
+            <el-option
+              v-for="site in (editingId
+                ? siteStore.sites
+                : siteStore.activeSites)"
+              :key="site.id"
+              :label="`${site.siteNo} · ${site.name}${site.status === '停用' ? '（已停用）' : ''}`"
+              :value="site.id"
+              :disabled="!editingId && site.status === '停用'"
+            />
+            <template #empty>监测组暂无启用鸟点，请先在「鸟点台账」登记</template>
           </el-select>
         </el-form-item>
         <el-form-item label="开始 / 结束">
